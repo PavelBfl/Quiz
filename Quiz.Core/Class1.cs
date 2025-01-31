@@ -8,13 +8,11 @@ namespace Quiz.Core
 		Queen,
 	}
 
-	public readonly record struct AntTeamId(AntRole Role, int Id);
-
-	public readonly record struct AntId(AntTeamId AntTeamId, int Team);
-
 	public interface IAnt
 	{
-		AntId Id { get; }
+		int Team { get; }
+
+		AntRole Role { get; }
 
 		Point Position { get; }
 
@@ -42,7 +40,7 @@ namespace Quiz.Core
 		Attack,
 	}
 
-	public readonly record struct Command(Course Course, Action Action, AntTeamId AntId);
+	public readonly record struct Command(Course Course, Action Action, IAnt Ant);
 
 	public interface IBot
 	{
@@ -68,6 +66,14 @@ namespace Quiz.Core
 
 		private StateCurrent? State { get; set; }
 
+		public void Init(Size halfSize)
+		{
+			if (State is null)
+			{
+				State = new([Left.Init(halfSize), Right.Init(halfSize)]);
+			}
+		}
+
 		public void Step()
 		{
 			Step(Left, 0);
@@ -77,13 +83,14 @@ namespace Quiz.Core
 		private void Step(IBot bot, int team)
 		{
 			var command = bot.GetCommandStep(State, team);
+			var ant = State.ItemValid(command.Ant);
 			switch (command.Action)
 			{
 				case Action.Move:
-					State.Move(new(command.AntId, team), command.Course);
+					State.Move(ant, command.Course);
 					break;
 				case Action.Attack:
-					State.Move(new(command.AntId, team), command.Course);
+					State.Move(ant, command.Course);
 					break;
 				default: throw Tools.EnumNotSupport(command.Action);
 			}
@@ -91,20 +98,6 @@ namespace Quiz.Core
 
 		private sealed class StateCurrent : IState
 		{
-			private static void ThrowIfNotUnique<T>(IEnumerable<T> source)
-			{
-				ArgumentNullException.ThrowIfNull(source);
-
-				var accumulator = new HashSet<T>();
-				foreach (var item in source)
-				{
-					if (!accumulator.Add(item))
-					{
-						throw new InvalidOperationException();
-					}
-				}
-			}
-
 			public StateCurrent(IEnumerable<IEnumerable<AntCreate>> teams)
 			{
 				ArgumentNullException.ThrowIfNull(teams);
@@ -112,11 +105,9 @@ namespace Quiz.Core
 				var teamCounter = 0;
 				foreach (var team in teams)
 				{
-					var antCounter = 0;
 					foreach (var ant in team)
 					{
-						Ants.Add(new(ant, antCounter, teamCounter));
-						antCounter++;
+						Ants.Add(new(ant, teamCounter));
 					}
 
 					teamCounter++;
@@ -125,21 +116,37 @@ namespace Quiz.Core
 
 			public Size PlaceSize { get; }
 
-			public List<Ant> Ants { get; } = [];
+			public HashSet<Ant> Ants { get; } = [];
 
 			public bool Contains(Point point) => new Rectangle(Point.Empty, PlaceSize).Contains(point);
 
-			public Ant GetAnt(AntId id) => Ants.Single(x => x.Id == id);
+			public Ant ItemValid(IAnt ant)
+			{
+				ArgumentNullException.ThrowIfNull(ant);
 
-			public Ant? GetAntOrDefault(AntId id) => Ants.SingleOrDefault(x => x.Id == id);
+				if (ant is Ant curstomAnt)
+				{
+					if (Ants.Contains(curstomAnt))
+					{
+						return curstomAnt;
+					}
+					else
+					{
+						throw new InvalidOperationException();
+					}
+				}
+				else
+				{
+					throw new InvalidOperationException();
+				}
+			}
 
 			public Ant GetAnt(Point position) => Ants.Single(x => x.Position == position);
 
 			public Ant? GetAntOrDefault(Point position) => Ants.SingleOrDefault(x => x.Position == position);
 
-			public bool Move(AntId id, Course course)
+			public bool Move(Ant ant, Course course)
 			{
-				var ant = GetAnt(id);
 				var newPosition = Tools.Offset(ant.Position, course);
 
 				if (Contains(newPosition) && GetAntOrDefault(newPosition) is null)
@@ -153,9 +160,8 @@ namespace Quiz.Core
 				}
 			}
 
-			public bool Attack(AntId id, Course course)
+			public bool Attack(Ant current, Course course)
 			{
-				var current = GetAnt(id);
 				var attackPoint = Tools.Offset(current.Position, course);
 
 				if (Contains(attackPoint) && GetAntOrDefault(attackPoint) is { } victim)
@@ -174,18 +180,21 @@ namespace Quiz.Core
 				}
 			}
 
-			IReadOnlyCollection<IAnt> IState.Ants => Ants.AsReadOnly();
+			IReadOnlyCollection<IAnt> IState.Ants => Ants;
 		}
 
 		private sealed class Ant : IAnt
 		{
-			public Ant(AntCreate creator, int localId, int team)
+			public Ant(AntCreate creator, int team)
 			{
-				Id = new(new(creator.Role, localId), team);
+				Team = team;
+				Role = creator.Role;
 				Position = creator.Position;
 			}
 
-			public AntId Id { get; }
+			public int Team { get; }
+
+			public AntRole Role { get; }
 
 			public Point Position { get; set; }
 
